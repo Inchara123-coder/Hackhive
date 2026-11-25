@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: smartsla
+      POSTGRES_PASSWORD: smartsla_dev
+      POSTGRES_DB: smartsla_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - smartsla-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartsla -d smartsla_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  smartsla-postgres:

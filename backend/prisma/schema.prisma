@@ -1,0 +1,451 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  AGENT
+  ADMIN
+}
+
+enum AgentAvailability {
+  AVAILABLE
+  BUSY
+  OFFLINE
+}
+
+enum ComplaintCategory {
+  PAYMENT
+  LOGIN
+  REFUND
+  DELIVERY
+  TECHNICAL
+  ACCOUNT
+  NETWORK
+  SUBSCRIPTION
+  OTHER
+}
+
+enum TicketPriority {
+  URGENT
+  HIGH
+  NORMAL
+}
+
+enum TicketStatus {
+  SELF_SERVICE
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  PENDING
+  WAITING_FOR_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum AssignmentType {
+  AUTOMATIC
+  MANUAL
+  REASSIGNMENT
+}
+
+enum CustomerSolutionResponse {
+  SOLVED
+  NOT_SOLVED
+  PENDING
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+enum SlaState {
+  ON_TRACK
+  WARNING
+  BREACHED
+  COMPLETED
+}
+
+enum SlaStatus {
+  ON_TRACK
+  WARNING
+  BREACHED
+  COMPLETED
+}
+
+enum EscalationStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum NotificationType {
+  TICKET_CREATED
+  AI_SOLUTION
+  CUSTOMER_REJECTED_SOLUTION
+  TICKET_ASSIGNED
+  NEW_MESSAGE
+  SLA_WARNING
+  SLA_BREACH
+  ESCALATION
+  TICKET_RESOLVED
+  FEEDBACK
+  ADMIN_ACTION
+}
+
+enum EscalationType {
+  WARNING
+  BREACH
+  MANUAL
+}
+
+model User {
+  id                  String             @id @default(uuid()) @db.Uuid
+  name                String             @map("full_name") @db.VarChar(100)
+  email               String             @unique @db.VarChar(320)
+  passwordHash        String             @map("password_hash")
+  phoneNumber         String?            @map("phone_number") @db.VarChar(30)
+  role                Role
+  active              Boolean            @default(true) @map("account_status")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+  agentProfile        AgentProfile?
+  customerTickets     Ticket[]           @relation("CustomerTickets")
+  assignedTickets     Ticket[]           @relation("AssignedAgent")
+  assignments         TicketAssignment[] @relation("AssignedUser")
+  madeAssignments     TicketAssignment[] @relation("AssigningUser")
+  messages            Message[]
+  internalNotes       InternalNote[]
+  notifications       Notification[]
+  feedback            Feedback[]
+  escalations         Escalation[]       @relation("EscalationActor")
+  notifiedEscalations Escalation[]       @relation("EscalationNotifiedAdmin")
+  historyEvents       TicketHistory[]    @relation("HistoryActor")
+  templates           CannedResponse[]   @relation("TemplateAuthor")
+  attachments         Attachment[]
+
+  @@index([role, active])
+  @@map("users")
+}
+
+model Application {
+  id                  String          @id @default(uuid()) @db.Uuid
+  name                String          @unique @map("application_name") @db.VarChar(80)
+  applicationCategory String          @map("application_category") @db.VarChar(100)
+  description         String          @db.Text
+  active              Boolean         @default(true) @map("is_active")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+  tickets             Ticket[]
+  knowledgeBase       KnowledgeBase[]
+
+  @@index([active, name])
+  @@map("applications")
+}
+
+model AgentProfile {
+  id           String              @id @default(uuid()) @db.Uuid
+  userId       String              @unique @map("user_id") @db.Uuid
+  skills       ComplaintCategory[]
+  availability AgentAvailability   @default(AVAILABLE) @map("availability_status")
+  capacity     Int                 @default(10) @map("maximum_workload")
+  team         String              @default("Customer Support")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agent_profiles")
+}
+
+model Ticket {
+  id                  String             @id @default(uuid()) @db.Uuid
+  publicId            String             @unique @map("ticket_number") @db.VarChar(24)
+  applicationId       String             @map("application_id") @db.Uuid
+  subject             String             @db.VarChar(160)
+  description         String             @db.Text
+  category            ComplaintCategory
+  priority            TicketPriority
+  priorityConfidence  Float              @map("priority_confidence")
+  priorityReason      String             @map("priority_reason") @db.VarChar(500)
+  status              TicketStatus       @default(SELF_SERVICE)
+  customerId          String             @map("customer_id") @db.Uuid
+  assignedAgentId     String?            @map("assigned_agent_id") @db.Uuid
+  selfServiceResolved Boolean            @default(false) @map("self_service_resolved")
+  resolutionMethod    String?            @map("resolution_method") @db.VarChar(100)
+  resolvedAt          DateTime?          @map("resolved_at")
+  closedAt            DateTime?          @map("closed_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+  customer            User               @relation("CustomerTickets", fields: [customerId], references: [id], onDelete: Restrict)
+  application         Application        @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  assignedAgent       User?              @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  assignments         TicketAssignment[]
+  sla                 SLARecord?
+  analyses            AIAnalysis[]
+  suggestions         AISuggestion[]
+  messages            Message[]
+  internalNotes       InternalNote[]
+  notifications       Notification[]
+  escalations         Escalation[]
+  feedback            Feedback?
+  history             TicketHistory[]
+  attachments         Attachment[]
+
+  @@index([customerId, createdAt])
+  @@index([assignedAgentId, status])
+  @@index([status, priority, createdAt])
+  @@index([applicationId, category])
+  @@index([status, createdAt])
+  @@map("tickets")
+}
+
+model TicketAssignment {
+  id               String         @id @default(uuid()) @db.Uuid
+  ticketId         String         @map("ticket_id") @db.Uuid
+  agentId          String         @map("agent_id") @db.Uuid
+  assignedById     String?        @map("assigned_by") @db.Uuid
+  assignmentType   AssignmentType @default(MANUAL) @map("assignment_type")
+  assignmentReason String         @map("assignment_reason") @db.VarChar(300)
+  assignedAt       DateTime       @default(now()) @map("assigned_at")
+  unassignedAt     DateTime?      @map("unassigned_at")
+  ticket           Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  agent            User           @relation("AssignedUser", fields: [agentId], references: [id], onDelete: Restrict)
+  assignedBy       User?          @relation("AssigningUser", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, assignedAt])
+  @@index([agentId, assignedAt])
+  @@map("ticket_assignments")
+}
+
+model SLAPolicy {
+  id                String         @id @default(uuid()) @db.Uuid
+  priority          TicketPriority @unique
+  firstResponseMins Int            @map("first_response_minutes")
+  resolutionMins    Int            @map("resolution_minutes")
+  warningMins       Int            @default(15) @map("warning_threshold_minutes")
+  active            Boolean        @default(true) @map("is_active")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  records           SLARecord[]
+
+  @@map("sla_policies")
+}
+
+model SLARecord {
+  id                  String    @id @default(uuid()) @db.Uuid
+  ticketId            String    @unique @map("ticket_id") @db.Uuid
+  policyId            String    @map("sla_policy_id") @db.Uuid
+  firstResponseDue    DateTime  @map("response_deadline")
+  resolutionDue       DateTime  @map("resolution_deadline")
+  firstResponseAt     DateTime? @map("first_response_at")
+  resolvedAt          DateTime? @map("resolved_at")
+  warningAt           DateTime? @map("warning_at")
+  breachedAt          DateTime? @map("breached_at")
+  state               SlaState  @default(ON_TRACK)
+  responseSlaStatus   SlaStatus @default(ON_TRACK) @map("response_sla_status")
+  resolutionSlaStatus SlaStatus @default(ON_TRACK) @map("resolution_sla_status")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  ticket              Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  policy              SLAPolicy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  @@index([state, firstResponseDue])
+  @@index([state, resolutionDue])
+  @@map("sla_records")
+}
+
+model KnowledgeBase {
+  id              String            @id @default(uuid()) @db.Uuid
+  applicationId   String?           @map("application_id") @db.Uuid
+  category        ComplaintCategory
+  title           String            @db.VarChar(160)
+  problem         String            @db.VarChar(500)
+  possibleCause   String            @map("possible_cause") @db.VarChar(500)
+  troubleshooting String[]          @map("troubleshooting_steps")
+  recommended     String            @map("recommended_solution") @db.Text
+  keywords        String[]
+  approved        Boolean           @default(false) @map("is_verified")
+  active          Boolean           @default(true) @map("is_active")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  application     Application?      @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  suggestions     AISuggestion[]
+
+  @@index([applicationId, category, approved, active])
+  @@map("knowledge_base")
+}
+
+model AIAnalysis {
+  id                 String            @id @default(uuid()) @db.Uuid
+  ticketId           String            @map("ticket_id") @db.Uuid
+  confidenceScore    Float             @map("confidence_score")
+  analysisReason     String            @map("analysis_reason") @db.VarChar(1000)
+  duplicateDetected  Boolean           @default(false) @map("duplicate_detected")
+  predictedCategory  ComplaintCategory @map("predicted_category")
+  categoryConfidence Float             @map("category_confidence")
+  predictedPriority  TicketPriority    @map("predicted_priority")
+  priorityConfidence Float             @map("priority_confidence")
+  sentiment          Sentiment
+  sentimentScore     Float             @map("sentiment_score")
+  priorityReason     String            @map("priority_reason") @db.VarChar(500)
+  duplicateTicketIds String[]          @map("similar_ticket_ids")
+  modelVersion       String            @map("model_version") @db.VarChar(80)
+  createdAt          DateTime          @default(now()) @map("created_at")
+  ticket             Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("ai_analysis")
+}
+
+model AISuggestion {
+  id               String                   @id @default(uuid()) @db.Uuid
+  ticketId         String                   @map("ticket_id") @db.Uuid
+  knowledgeBaseId  String?                  @map("knowledge_base_id") @db.Uuid
+  relevance        Float                    @map("relevance_score")
+  steps            String[]
+  recommended      String                   @map("suggested_solution") @db.Text
+  customerChoice   Boolean?                 @map("customer_choice")
+  customerResponse CustomerSolutionResponse @default(PENDING) @map("customer_response")
+  confirmedAt      DateTime?                @map("responded_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  ticket           Ticket                   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  knowledgeBase    KnowledgeBase?           @relation(fields: [knowledgeBaseId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, relevance])
+  @@map("ai_suggestions")
+}
+
+model Message {
+  id            String   @id @default(uuid()) @db.Uuid
+  ticketId      String   @map("ticket_id") @db.Uuid
+  authorId      String   @map("sender_id") @db.Uuid
+  body          String   @map("message_content") @db.Text
+  attachmentUrl String?  @map("attachment_url") @db.VarChar(1000)
+  createdAt     DateTime @default(now()) @map("created_at")
+  ticket        Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author        User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@map("messages")
+}
+
+model InternalNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  ticketId  String   @map("ticket_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  body      String   @map("note_content") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@map("internal_notes")
+}
+
+model Attachment {
+  id           String   @id @default(uuid()) @db.Uuid
+  ticketId     String   @map("ticket_id") @db.Uuid
+  uploadedById String   @map("uploaded_by_id") @db.Uuid
+  originalName String   @map("original_name") @db.VarChar(255)
+  storageName  String   @unique @map("storage_name") @db.VarChar(100)
+  mimeType     String   @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int      @map("size_bytes")
+  createdAt    DateTime @default(now()) @map("created_at")
+  ticket       Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@map("attachments")
+}
+
+model CannedResponse {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String   @db.VarChar(100)
+  body      String   @db.VarChar(3000)
+  authorId  String   @map("author_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  author    User     @relation("TemplateAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([title])
+  @@map("canned_responses")
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  ticketId  String?          @map("ticket_id") @db.Uuid
+  type      NotificationType @map("notification_type")
+  title     String           @default("SmartSLA update") @db.VarChar(120)
+  message   String           @db.VarChar(500)
+  isRead    Boolean          @default(false) @map("is_read")
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket    Ticket?          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model Escalation {
+  id              String           @id @default(uuid()) @db.Uuid
+  ticketId        String           @map("ticket_id") @db.Uuid
+  actorId         String?          @map("actor_id") @db.Uuid
+  notifiedAdminId String?          @map("notified_admin_id") @db.Uuid
+  type            EscalationType
+  level           Int              @default(1)
+  reason          String           @db.VarChar(500)
+  recommended     String?          @db.VarChar(500)
+  actionTaken     String?          @map("action_taken") @db.VarChar(500)
+  status          EscalationStatus @default(OPEN)
+  triggeredAt     DateTime         @default(now()) @map("triggered_at")
+  ticket          Ticket           @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor           User?            @relation("EscalationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  notifiedAdmin   User?            @relation("EscalationNotifiedAdmin", fields: [notifiedAdminId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, type, status])
+  @@index([triggeredAt])
+  @@map("escalations")
+}
+
+model Feedback {
+  id         String   @id @default(uuid()) @db.Uuid
+  ticketId   String   @unique @map("ticket_id") @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  rating     Int      @db.SmallInt
+  comment    String?  @db.VarChar(1500)
+  createdAt  DateTime @default(now()) @map("created_at")
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  customer   User     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([rating, createdAt])
+  @@map("feedback")
+}
+
+model TicketHistory {
+  id          String   @id @default(uuid()) @db.Uuid
+  ticketId    String   @map("ticket_id") @db.Uuid
+  actorId     String?  @map("performed_by") @db.Uuid
+  actionType  String   @default("EVENT") @map("action_type") @db.VarChar(60)
+  event       String   @map("action_event") @db.VarChar(200)
+  oldValue    Json?    @map("old_value")
+  newValue    Json?    @map("new_value")
+  details     Json?
+  description String?  @db.VarChar(500)
+  isPublic    Boolean  @default(true) @map("is_public")
+  createdAt   DateTime @default(now()) @map("created_at")
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor       User?    @relation("HistoryActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_history")
+}
